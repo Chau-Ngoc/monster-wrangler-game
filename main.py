@@ -15,9 +15,21 @@ class Knight(pygame.sprite.Sprite):
         self.warps = WARPS_COUNT
         self.lives = PLAYER_STARTING_LIVES
 
+        self.moving_area_rect = display_surface.get_rect(
+            width=WINDOW_WIDTH, height=WINDOW_HEIGHT
+        )
+
     def update(self) -> None:
-        """Update the Knight object. Override the update method of the parent class."""
-        self.move()
+        """Update (Move) the Knight object. Override the update method of the parent class."""
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_LEFT] and self.rect.left > self.moving_area_rect.left:
+            self.rect.x -= self.velocity
+        if keys[pygame.K_RIGHT] and self.rect.right < self.moving_area_rect.right:
+            self.rect.x += self.velocity
+        if keys[pygame.K_UP] and self.rect.top > self.moving_area_rect.top:
+            self.rect.y -= self.velocity
+        if keys[pygame.K_DOWN] and self.rect.bottom < self.moving_area_rect.bottom:
+            self.rect.y += self.velocity
 
     def warp(self):
         """Teleport the knight out of the gameplay area."""
@@ -29,18 +41,6 @@ class Knight(pygame.sprite.Sprite):
         """Reset the player position."""
         self.rect.centerx = WINDOW_WIDTH // 2
         self.rect.bottom = WINDOW_HEIGHT
-
-    def move(self):
-        """Move the knight."""
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_LEFT]:
-            self.rect.x -= self.velocity
-        if keys[pygame.K_RIGHT]:
-            self.rect.x += self.velocity
-        if keys[pygame.K_UP]:
-            self.rect.y -= self.velocity
-        if keys[pygame.K_DOWN]:
-            self.rect.y += self.velocity
 
 
 class Monster(pygame.sprite.Sprite):
@@ -72,12 +72,6 @@ class Monster(pygame.sprite.Sprite):
         self.rect.x += self.velocity * self.dx
         self.rect.y += self.velocity * self.dy
 
-        # bounce the monster
-        if self.rect.left <= 0 or self.rect.right >= WINDOW_WIDTH:
-            self.dx *= -1
-        if self.rect.top <= 0 or self.rect.bottom >= WINDOW_HEIGHT:
-            self.dy *= -1
-
 
 class Game:
     """A class to control gameplay."""
@@ -102,6 +96,7 @@ class Game:
         self.next_level_sound = pygame.mixer.Sound(
             "./monster_wrangler_assets/next-level.wav"
         )
+
         self.catch_sound = pygame.mixer.Sound("./monster_wrangler_assets/catch.wav")
         self.die_sound = pygame.mixer.Sound("./monster_wrangler_assets/die.wav")
 
@@ -130,9 +125,11 @@ class Game:
             "purple": purple_monster,
             "yellow": yellow_monster,
         }
+
         self.target_monster_type = random.choice(
             [type for type in self.monster_types.keys()]
         )
+
         self.target_monster_image = self.monster_types[self.target_monster_type]
         self.target_monster_rect = self.target_monster_image.get_rect()
         self.target_monster_rect.centerx = WINDOW_WIDTH // 2
@@ -198,6 +195,7 @@ class Game:
             self.target_monster_rect,
             width=2,
         )
+
         pygame.draw.rect(
             display_surface,
             colors[self.target_monster_type],
@@ -222,19 +220,27 @@ class Game:
         collided_monster = pygame.sprite.spritecollideany(
             self.player, self.monster_group
         )
+
         return collided_monster
 
     def populate_monsters(self):
-        """Populate new monsters each round."""
-        lower_limit = self.current_round + 1
-        upper_limit = self.current_round + 3
+        """Populate new monsters each round.
+        The higher the round number, the more monsters will be generated."""
+        lower_limit = self.current_round * 2
+        upper_limit = self.current_round * 3
         num_monsters = random.randint(lower_limit, upper_limit)
 
         for _ in range(num_monsters):
             monster_type = random.choice([type for type in self.monster_types.keys()])
             monster_image = self.monster_types[monster_type]
-            x = random.randint(0, WINDOW_WIDTH - 64)
-            y = random.randint(0, WINDOW_HEIGHT - 64)
+
+            x = random.randint(
+                self.gameplay_area_rect.left, self.gameplay_area_rect.right - 64
+            )
+            y = random.randint(
+                self.gameplay_area_rect.top, self.gameplay_area_rect.bottom - 64
+            )
+
             new_monster = Monster(monster_image, x, y, monster_type)
             self.monster_group.add(new_monster)
 
@@ -250,6 +256,28 @@ class Game:
         # assign target_monster_image to this monster image.
         self.target_monster_image = selected_monster.image
         self.target_monster_type = selected_monster.type
+
+    def bounce_monsters(self):
+        """Limit the bouncing area of the monsters to be inside the gameplay area."""
+        for monster in self.monster_group:
+            if (
+                monster.rect.left <= self.gameplay_area_rect.left
+                or monster.rect.right >= self.gameplay_area_rect.right
+            ):
+                monster.dx *= -1
+
+            if (
+                monster.rect.top <= self.gameplay_area_rect.top
+                or monster.rect.bottom >= self.gameplay_area_rect.bottom
+            ):
+                monster.dy *= -1
+
+    def constrain_knight_area(self):
+        """Once the Knight has enter the gameplay area, limit
+        the roaming area of the Knight to be only inside the gameplay area.
+        The only way for the Knight to get out of the gamplay area is to warp."""
+        if self.player.rect.bottom > self.gameplay_area_rect.bottom:
+            self.player.moving_area_rect = self.gameplay_area_rect
 
     def pause_game(self):
         """Pause the game."""
@@ -307,6 +335,10 @@ game.select_a_target()
 # create a clock to control fps
 clock = pygame.time.Clock()
 
+print(f"display surface's width: {display_surface.get_rect().width}")
+print(f"display surface's height: {display_surface.get_rect().height}")
+print(f"gameplay area rect's bottom: {game.gameplay_area_rect.bottom}")
+
 # the main game loop
 running = True
 while running:
@@ -325,6 +357,10 @@ while running:
     # draw the knight group and monster group
     knight_group.draw(display_surface)
     knight_group.update()
+
+    # bounce the monsters and move the knight
+    game.bounce_monsters()
+    game.constrain_knight_area()
 
     monster_group.draw(display_surface)
     monster_group.update()
@@ -348,6 +384,8 @@ while running:
             else:
                 game.next_level_sound.play()
                 game.current_round += 1
+                game.round_time = 0
+                game.frame_count = 0
                 knight.warps = WARPS_COUNT
                 game.populate_monsters()
                 game.select_a_target()
@@ -358,6 +396,10 @@ while running:
             knight.lives -= 1
             game.die_sound.play()
             knight.reset_position()
+
+    print(
+        f"player rect bottom > gameplay area rect bottom: {game.player.rect.bottom > game.gameplay_area_rect.bottom}"
+    )
 
     # update the display
     pygame.display.update()
